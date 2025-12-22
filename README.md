@@ -163,12 +163,12 @@ Registrant name changes on existing domains are not supported via contact update
 
 Premium domains (non-standard pricing) are rejected with an error during availability checks, registration, transfer, and renewal.
 
-## Out of scope (v1)
+## Limitations
 
-- Scheduled/automatic TLD price sync (on-demand import via the extension admin page is supported)
-- TLD-specific additional contact fields beyond the standard FOSSBilling contact fields
-- DNS zone management, domain trade, dropcatch
-- Transfer status polling
+- There is no scheduled/automatic TLD price sync, only on-demand import via the extension admin page is supported
+- There is no support for automatic provisioning under TLD extensions which require additional contact fields or documents to be filled, beyond the standard contact fields
+- There is no support for DNS zone management, domain owner changes or dropcatching
+- Domain transfer statuses are not polled
 
 TLD-specific requirements not covered by standard contact fields will surface as API validation errors during registrant contact validation.
 
