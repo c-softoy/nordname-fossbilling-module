@@ -1,0 +1,7 @@
+{
+  "id": "nordname",
+  "type": "mod",
+  "name": "NordName registrar",
+  "description": "Cron hooks for NordName domain sync and TLD import tool.",
+  "version": "1.0.0"
+}

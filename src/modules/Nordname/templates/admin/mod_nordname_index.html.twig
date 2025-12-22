@@ -1,0 +1,312 @@
+{% extends request.ajax ? "layout_blank.html.twig" : "layout_default.html.twig" %}
+
+{% block meta_title %}{{ 'NordName registrar'|trans }}{% endblock %}
+
+{% set active_menu = 'extensions' %}
+{% set wholesale_currency = pricing_context.wholesale_currency|default('EUR') %}
+{% set sell_currency = pricing_context.sell_currency|default('') %}
+{% set conversion_error = pricing_context.error|default(null) %}
+{% set eur_to_sell_rate = pricing_context.eur_to_sell_rate|default(1) %}
+{% set currency_settings_url = pricing_context.currency_settings_url|default('extension/settings/currency'|url) %}
+
+{% block content %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <div>
+                <h3 class="card-title mb-1">{{ 'TLD import / sync'|trans }}</h3>
+                <p class="text-secondary mb-0">{{ 'Import or update TLD pricing from NordName with your profit margin applied.'|trans }}</p>
+            </div>
+        </div>
+        <div class="card-body">
+            {% if nordname_registrars is empty %}
+                <div class="alert alert-warning mb-0">
+                    {{ 'No NordName registrar instances are configured. Create one under System → Domain Management → Registrars first.'|trans }}
+                </div>
+            {% else %}
+                {% if conversion_error %}
+                    <div class="alert alert-danger mb-4">
+                        {{ conversion_error|trans }}
+                        <a href="{{ currency_settings_url }}">{{ 'Configure currency settings'|trans }}</a>
+                    </div>
+                {% elseif pricing_context.conversion_required|default(false) %}
+                    <div class="alert alert-info mb-4">
+                        {{ 'NordName wholesale prices are in %currency%. Sell prices are converted to %sell% using the system exchange rate (1 %currency% = %rate% %sell%).'|trans({
+                            '%currency%': wholesale_currency,
+                            '%sell%': sell_currency,
+                            '%rate%': eur_to_sell_rate|number_format(4, '.', '')
+                        }) }}
+                    </div>
+                {% else %}
+                    <div class="alert alert-info mb-4">
+                        {{ 'NordName wholesale and FOSSBilling sell prices are both in %currency%.'|trans({'%currency%': wholesale_currency}) }}
+                    </div>
+                {% endif %}
+
+                <div class="row g-3 mb-4">
+                    <div class="col-lg-6">
+                        <label class="form-label" for="tld_registrar_id">{{ 'NordName registrar'|trans }}</label>
+                        <select class="form-select" id="tld_registrar_id">
+                            {% for registrar in nordname_registrars %}
+                                <option value="{{ registrar.id }}">{{ registrar.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-lg-3">
+                        <label class="form-label" for="fixed_margin">{{ 'Fixed profit margin (%currency%)'|trans({'%currency%': sell_currency ?: wholesale_currency}) }}</label>
+                        <input class="form-control" type="number" min="0" step="0.01" id="fixed_margin" value="0">
+                    </div>
+                    <div class="col-lg-3">
+                        <label class="form-label" for="percent_margin">{{ 'Percent profit margin'|trans }}</label>
+                        <input class="form-control" type="number" min="0" step="0.01" id="percent_margin" value="0">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-check">
+                            <input class="form-check-input" type="checkbox" id="use_promotional">
+                            <span class="form-check-label">{{ 'Use promotional prices from NordName'|trans }}</span>
+                        </label>
+                    </div>
+                    <div class="col-12">
+                        <button type="button" class="btn btn-primary" id="load_tlds_btn"{% if conversion_error %} disabled{% endif %}>{{ 'Load TLDs'|trans }}</button>
+                        <button type="button" class="btn btn-success ms-2" id="import_tlds_btn" disabled{% if conversion_error %} data-blocked="1"{% endif %}>{{ 'Import / sync selected'|trans }}</button>
+                    </div>
+                </div>
+
+                <div id="tld_sync_status" class="mb-3" hidden></div>
+
+                <div class="table-responsive" id="tld_table_wrapper" hidden>
+                    <p class="text-secondary small">{{ 'Wholesale prices are shown per year in %currency%. Sell prices use the system exchange rate and apply your margin in %sell%. Import applies each TLD minimum registration years when creating or updating prices.'|trans({
+                        '%currency%': wholesale_currency,
+                        '%sell%': sell_currency ?: wholesale_currency
+                    }) }}</p>
+                    <table class="table table-vcenter card-table" id="tld_table">
+                        <thead>
+                            <tr>
+                                <th>
+                                    <input type="checkbox" id="select_all_tlds" aria-label="{{ 'Select all TLDs'|trans }}">
+                                </th>
+                                <th>{{ 'TLD'|trans }}</th>
+                                <th>{{ 'Status'|trans }}</th>
+                                <th>{{ 'Wholesale register (%currency%)'|trans({'%currency%': wholesale_currency}) }}</th>
+                                <th>{{ 'Wholesale renew (%currency%)'|trans({'%currency%': wholesale_currency}) }}</th>
+                                <th>{{ 'Wholesale transfer (%currency%)'|trans({'%currency%': wholesale_currency}) }}</th>
+                                <th>{{ 'Sell register (%currency%)'|trans({'%currency%': sell_currency ?: wholesale_currency}) }}</th>
+                                <th>{{ 'Sell renew (%currency%)'|trans({'%currency%': sell_currency ?: wholesale_currency}) }}</th>
+                                <th>{{ 'Sell transfer (%currency%)'|trans({'%currency%': sell_currency ?: wholesale_currency}) }}</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tld_table_body"></tbody>
+                    </table>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <h4 class="card-title mb-2">{{ 'Registrar settings'|trans }}</h4>
+            <p class="text-secondary mb-0">
+                {{ 'Configure API credentials, sandbox mode, registrant language, and renewal date offset under'|trans }}
+                <a href="{{ 'servicedomain'|url }}#tab-registrars">{{ 'System → Domain Management → Registrars'|trans }}</a>.
+            </p>
+        </div>
+    </div>
+{% endblock %}
+
+{% block js %}
+{% if nordname_registrars is not empty %}
+<script>
+(function () {
+    let catalog = [];
+    let pricingMeta = {
+        wholesaleCurrency: {{ wholesale_currency|json_encode|raw }},
+        sellCurrency: {{ (sell_currency ?: wholesale_currency)|json_encode|raw }},
+        eurToSellRate: {{ eur_to_sell_rate|default(1)|json_encode|raw }},
+        conversionBlocked: {{ conversion_error ? 'true' : 'false' }}
+    };
+
+    const loadBtn = document.getElementById('load_tlds_btn');
+    const importBtn = document.getElementById('import_tlds_btn');
+    const statusEl = document.getElementById('tld_sync_status');
+    const tableWrapper = document.getElementById('tld_table_wrapper');
+    const tableBody = document.getElementById('tld_table_body');
+    const selectAll = document.getElementById('select_all_tlds');
+
+    function showStatus(message, type) {
+        statusEl.hidden = false;
+        statusEl.className = 'alert alert-' + type + ' mb-3';
+        statusEl.textContent = message;
+    }
+
+    function getMargins() {
+        return {
+            fixed: parseFloat(document.getElementById('fixed_margin').value || '0') || 0,
+            percent: parseFloat(document.getElementById('percent_margin').value || '0') || 0,
+            usePromotional: document.getElementById('use_promotional').checked,
+        };
+    }
+
+    function applyMargin(base, fixed, percent) {
+        if (base === null || base === undefined || isNaN(base)) {
+            return null;
+        }
+        return Math.round((base + fixed + (base * percent / 100)) * 100) / 100;
+    }
+
+    function convertWholesale(eurAmount) {
+        if (eurAmount === null || eurAmount === undefined || isNaN(eurAmount)) {
+            return null;
+        }
+        return Math.round(eurAmount * pricingMeta.eurToSellRate * 100) / 100;
+    }
+
+    function applySellPrice(eurBase, fixed, percent) {
+        return applyMargin(convertWholesale(eurBase), fixed, percent);
+    }
+
+    function pickWholesale(item, operation) {
+        const margins = getMargins();
+        const wholesale = item.wholesale[operation];
+        return margins.usePromotional ? wholesale.promotional : wholesale.standard;
+    }
+
+    function formatPrice(value, currency) {
+        if (value === null || value === undefined || isNaN(value)) {
+            return '-';
+        }
+        return Number(value).toFixed(2) + ' ' + currency;
+    }
+
+    function formatWholesalePair(promotional, standard) {
+        return formatPrice(promotional, pricingMeta.wholesaleCurrency) +
+            ' / ' +
+            formatPrice(standard, pricingMeta.wholesaleCurrency);
+    }
+
+    function renderTable() {
+        const margins = getMargins();
+        tableBody.innerHTML = '';
+
+        catalog.forEach(function (item, index) {
+            const registerBase = pickWholesale(item, 'register');
+            const renewBase = pickWholesale(item, 'renew');
+            const transferBase = pickWholesale(item, 'transfer');
+
+            const row = document.createElement('tr');
+            row.innerHTML =
+                '<td><input type="checkbox" class="tld-select" data-index="' + index + '"></td>' +
+                '<td>.' + item.tld + '</td>' +
+                '<td>' + (item.exists ? '{{ 'Existing'|trans|e('js') }}' : '{{ 'New'|trans|e('js') }}') + '</td>' +
+                '<td>' + formatWholesalePair(item.wholesale.register.promotional, item.wholesale.register.standard) + '</td>' +
+                '<td>' + formatWholesalePair(item.wholesale.renew.promotional, item.wholesale.renew.standard) + '</td>' +
+                '<td>' + formatWholesalePair(item.wholesale.transfer.promotional, item.wholesale.transfer.standard) + '</td>' +
+                '<td>' + formatPrice(applySellPrice(registerBase, margins.fixed, margins.percent), pricingMeta.sellCurrency) + '</td>' +
+                '<td>' + formatPrice(applySellPrice(renewBase, margins.fixed, margins.percent), pricingMeta.sellCurrency) + '</td>' +
+                '<td>' + formatPrice(applySellPrice(transferBase, margins.fixed, margins.percent), pricingMeta.sellCurrency) + '</td>';
+            tableBody.appendChild(row);
+        });
+
+        tableWrapper.hidden = catalog.length === 0;
+        importBtn.disabled = catalog.length === 0 || pricingMeta.conversionBlocked;
+        selectAll.checked = false;
+    }
+
+    function apiPost(endpoint, data, timeoutMs) {
+        const api = window.FOSSBilling && window.FOSSBilling.api;
+        if (!api || !api.admin || typeof api.makeRequest !== 'function') {
+            return Promise.reject(new Error('{{ 'FOSSBilling API is not available. Reload the page and try again.'|trans|e('js') }}'));
+        }
+
+        const requestUrl = new URL(endpoint, api.admin.baseURL + '/').toString();
+
+        return new Promise(function (resolve, reject) {
+            api.makeRequest('POST', requestUrl, data, resolve, function (error) {
+                reject(new Error(error.message || '{{ 'Request failed'|trans|e('js') }}'));
+            }, false, timeoutMs || 120000);
+        });
+    }
+
+    loadBtn.addEventListener('click', function () {
+        if (pricingMeta.conversionBlocked) {
+            return;
+        }
+
+        loadBtn.disabled = true;
+        showStatus('{{ 'Loading TLD pricing from NordName...'|trans|e('js') }}', 'info');
+
+        apiPost('nordname/tld_fetch_list', {
+            tld_registrar_id: document.getElementById('tld_registrar_id').value,
+        }, 120000).then(function (result) {
+            catalog = (result && result.tlds) ? result.tlds : [];
+            if (result && result.eur_to_sell_rate) {
+                pricingMeta.eurToSellRate = result.eur_to_sell_rate;
+            }
+            if (result && result.sell_currency) {
+                pricingMeta.sellCurrency = result.sell_currency;
+            }
+            if (result && result.wholesale_currency) {
+                pricingMeta.wholesaleCurrency = result.wholesale_currency;
+            }
+            renderTable();
+            showStatus('{{ 'Loaded'|trans|e('js') }} ' + catalog.length + ' {{ 'TLDs'|trans|e('js') }}.', 'success');
+        }).catch(function (error) {
+            showStatus(error.message, 'danger');
+        }).finally(function () {
+            loadBtn.disabled = pricingMeta.conversionBlocked;
+        });
+    });
+
+    importBtn.addEventListener('click', function () {
+        if (pricingMeta.conversionBlocked) {
+            return;
+        }
+
+        const selected = Array.from(document.querySelectorAll('.tld-select:checked')).map(function (input) {
+            return catalog[parseInt(input.dataset.index, 10)].tld;
+        });
+
+        if (selected.length === 0) {
+            showStatus('{{ 'Select at least one TLD to import or sync.'|trans|e('js') }}', 'warning');
+            return;
+        }
+
+        importBtn.disabled = true;
+        showStatus('{{ 'Importing selected TLDs...'|trans|e('js') }}', 'info');
+
+        const margins = getMargins();
+        apiPost('nordname/tld_import', {
+            tld_registrar_id: document.getElementById('tld_registrar_id').value,
+            tlds: selected,
+            fixed_margin: margins.fixed,
+            percent_margin: margins.percent,
+            use_promotional: margins.usePromotional ? '1' : '0',
+        }, 300000).then(function (result) {
+            let message = '{{ 'Created'|trans|e('js') }}: ' + (result.created || 0) +
+                ', {{ 'Updated'|trans|e('js') }}: ' + (result.updated || 0);
+
+            if (result.failed && result.failed.length) {
+                message += '. {{ 'Failed'|trans|e('js') }}: ' + result.failed.length;
+            }
+
+            showStatus(message, result.failed && result.failed.length ? 'warning' : 'success');
+            loadBtn.click();
+        }).catch(function (error) {
+            showStatus(error.message, 'danger');
+        }).finally(function () {
+            importBtn.disabled = catalog.length === 0 || pricingMeta.conversionBlocked;
+        });
+    });
+
+    selectAll.addEventListener('change', function () {
+        document.querySelectorAll('.tld-select').forEach(function (input) {
+            input.checked = selectAll.checked;
+        });
+    });
+
+    ['fixed_margin', 'percent_margin', 'use_promotional'].forEach(function (id) {
+        document.getElementById(id).addEventListener('input', renderTable);
+        document.getElementById(id).addEventListener('change', renderTable);
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}
