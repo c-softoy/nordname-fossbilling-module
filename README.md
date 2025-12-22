@@ -191,4 +191,4 @@ Use **Sandbox mode** with a NordName OTE API key. See [Post-configuration setup]
 ## API reference
 
 - [FOSSBilling registrar integration guide](https://docs.fossbilling.org/extensions-and-development/guides/creating-a-registrar-integration/)
-- NordName API v3 specification: [`swagger.yaml`](swagger.yaml)
+- NordName API v3 specification: [`swagger.yaml`](https://app.nordname.eu/en/api-docs)
